@@ -1,35 +1,15 @@
-import * as readline from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import readline from "node:readline/promises";
+import chalk from "chalk";
+import { ui } from "./ui.js";
 
-const rl = readline.createInterface({ input, output });
+export const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
-/**
- * Read a line from the user. Returns null on EOF / Ctrl+D.
- */
-export async function prompt(question: string): Promise<string | null> {
-  try {
-    const answer = await rl.question(question);
-    return answer;
-  } catch {
-    return null;
-  }
+export function ask(question: string): Promise<string> {
+  return rl.question(question);
 }
 
-/**
- * Ask a yes/no confirmation. Default is false when empty.
- */
-export async function confirm(
-  question: string,
-  defaultYes = false
-): Promise<boolean> {
-  const hint = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = await prompt(`${question} ${hint} `);
-  if (answer === null) return false;
-  const normalized = answer.trim().toLowerCase();
-  if (normalized === "") return defaultYes;
-  return normalized === "y" || normalized === "yes";
-}
-
-export function closePrompt(): void {
-  rl.close();
+export async function confirm(message: string, detail?: string): Promise<boolean> {
+  if (detail) ui.detail(detail);
+  const answer = await ask(chalk.yellow("  ? ") + message + chalk.dim(" [y/N] "));
+  return /^y(es)?$/i.test(answer.trim());
 }
