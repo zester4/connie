@@ -36,7 +36,6 @@ export class Agent {
     if (!this.session) return;
     const loaded = await this.session.loadHistory();
     if (loaded.length === 0) return;
-    // Keep system prompt, then restore the rest
     this.history = [{ role: "system", content: SYSTEM_PROMPT }, ...loaded.filter((m) => m.role !== "system")];
   }
 
@@ -52,34 +51,12 @@ export class Agent {
     for (let step = 0; step < config.maxSteps; step++) {
       const spinner = ui.spinner("thinking");
       let message: ChatMessage;
-      let streamedContent = "";
 
       try {
-        // Prefer streaming for the final text reply path
-        message = await this.client.completeStream(
-          this.history,
-          this.registry.specs(),
-          {
-            onContent: (delta) => {
-              if (!streamedContent) {
-                spinner.stop();
-                ui.streamStart();
-              }
-              streamedContent += delta;
-              ui.streamDelta(delta);
-            },
-          },
-        );
+        // Stream from API for lower latency, but buffer content — render once with Markdown
+        message = await this.client.completeStream(this.history, this.registry.specs(), {});
       } finally {
         spinner.stop();
-      }
-
-      // If we streamed text and there are no tool calls, finish the stream UI
-      if (streamedContent && !(message.tool_calls?.length)) {
-        ui.streamEnd(streamedContent);
-      } else if (!streamedContent && !(message.tool_calls?.length)) {
-        // Non-streamed final answer
-        ui.assistant(message.content ?? "(no response)");
       }
 
       this.history.push({
@@ -94,7 +71,11 @@ export class Agent {
       });
 
       const calls = message.tool_calls ?? [];
-      if (calls.length === 0) return;
+      if (calls.length === 0) {
+        // Final text reply — single Markdown-rendered print
+        ui.assistant(message.content ?? "(no response)");
+        return;
+      }
 
       for (const call of calls) {
         const output = await this.execute(call);
