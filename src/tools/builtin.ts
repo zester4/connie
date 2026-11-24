@@ -1,135 +1,135 @@
-import { registerTool } from "./registry.js";
-import type { ToolDefinition } from "../types.js";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { exec } from "node:child_process";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
+import type { Tool } from "../types.js";
+import { importToolModule, renderToolSource, validateToolDraft } from "./loader.js";
 
 const execAsync = promisify(exec);
 
-/** Register starter tools + create_tool meta-tool */
-export function registerBuiltinTools(): void {
-  registerTool({
+const reqString = (v: unknown, field: string): string => {
+  if (typeof v !== "string" || v.length === 0) throw new Error(`"${field}" must be a non-empty string`);
+  return v;
+};
+
+const preview = (s: string, max = 800) => (s.length > max ? s.slice(0, max) + "\n…" : s);
+
+export const builtinTools: Tool[] = [
+  {
     name: "read_file",
-    description: "Read the contents of a file at the given path.",
+    description: "Read a UTF-8 text file and return its contents.",
     parameters: {
       type: "object",
-      properties: {
-        path: { type: "string", description: "Absolute or relative file path" },
-      },
+      properties: { path: { type: "string", description: "Path to the file" } },
       required: ["path"],
     },
-    execute: async (args) => {
-      const filePath = String(args.path);
-      const content = await fs.readFile(filePath, "utf-8");
-      return content;
-    },
-  });
+    run: async (args) => readFile(resolve(reqString(args.path, "path")), "utf8"),
+  },
 
-  registerTool({
+  {
     name: "write_file",
-    description: "Write content to a file. Creates parent directories if needed.",
+    description: "Create or overwrite a UTF-8 text file. Requires user approval.",
     parameters: {
       type: "object",
       properties: {
-        path: { type: "string", description: "File path to write" },
-        content: { type: "string", description: "Content to write" },
+        path: { type: "string" },
+        content: { type: "string" },
       },
       required: ["path", "content"],
     },
-    execute: async (args) => {
-      const filePath = String(args.path);
-      const content = String(args.content);
-      await fs.mkdir(path.dirname(filePath), { recursive: true });
-      await fs.writeFile(filePath, content, "utf-8");
-      return `Wrote ${content.length} bytes to ${filePath}`;
+    run: async (args, ctx) => {
+      const path = resolve(reqString(args.path, "path"));
+      const content = String(args.content ?? "");
+      const ok = await ctx.confirm(`Write ${content.length} chars to ${path}?`, preview(content));
+      if (!ok) return "User declined the write.";
+      await writeFile(path, content, "utf8");
+      return `Wrote ${content.length} chars to ${path}`;
     },
-  });
+  },
 
-  registerTool({
+  {
     name: "list_dir",
-    description: "List files and directories at the given path.",
+    description: "List entries in a directory. Directories are suffixed with '/'.",
     parameters: {
       type: "object",
-      properties: {
-        path: { type: "string", description: "Directory path (default: .)" },
-      },
-      required: [],
+      properties: { path: { type: "string", description: "Directory path (default: current dir)" } },
     },
-    execute: async (args) => {
-      const dir = String(args.path ?? ".");
-      const entries = await fs.readdir(dir, { withFileTypes: true });
+    run: async (args) => {
+      const dir = resolve(typeof args.path === "string" ? args.path : ".");
+      const entries = await readdir(dir, { withFileTypes: true });
       return entries
-        .map((e) => `${e.isDirectory() ? "d" : "f"} ${e.name}`)
+        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
+        .sort()
         .join("\n");
     },
-  });
+  },
 
-  registerTool({
-    name: "run_command",
+  {
+    name: "run_shell",
     description:
-      "Run a shell command and return stdout + stderr. Use carefully.",
+      "Run a shell command (/bin/sh) and return its exit code and output. Times out after 30s. Requires user approval.",
     parameters: {
       type: "object",
-      properties: {
-        command: { type: "string", description: "Shell command to execute" },
-        cwd: { type: "string", description: "Working directory (optional)" },
-      },
+      properties: { command: { type: "string" } },
       required: ["command"],
     },
-    execute: async (args) => {
-      const command = String(args.command);
-      const cwd = args.cwd ? String(args.cwd) : undefined;
+    run: async (args, ctx) => {
+      const command = reqString(args.command, "command");
+      if (!(await ctx.confirm("Run this shell command?", command))) {
+        return "User declined to run the command.";
+      }
       try {
-        const { stdout, stderr } = await execAsync(command, {
-          cwd,
-          timeout: 30_000,
-          maxBuffer: 1024 * 1024,
-        });
-        return [stdout, stderr].filter(Boolean).join("\n--- stderr ---\n");
-      } catch (err: unknown) {
-        const e = err as { stdout?: string; stderr?: string; message?: string };
-        return `Error: ${e.message ?? String(err)}\n${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+        const { stdout, stderr } = await execAsync(command, { timeout: 30_000, maxBuffer: 1024 * 1024 });
+        return `exit 0\n${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}`;
+      } catch (e) {
+        const err = e as { code?: number; stdout?: string; stderr?: string; message: string };
+        const body =
+          err.stdout || err.stderr
+            ? `${err.stdout ?? ""}${err.stderr ? `\nstderr:\n${err.stderr}` : ""}`
+            : err.message;
+        return `exit ${err.code ?? "error"}\n${body}`;
       }
     },
-  });
+  },
 
-  // Meta-tool: create_tool (registers a simple tool from description at runtime)
-  registerTool({
+  {
     name: "create_tool",
-    description:
-      "Create and register a simple tool at runtime. The tool will echo its arguments as a placeholder. For real custom tools, place them in ~/.connie/tools.",
+    description: [
+      "Create a new reusable tool that becomes available immediately and persists across sessions.",
+      "Use only when no existing tool can do the job and the capability is likely to be reused.",
+      "`code` is the BODY of an async function `run(args)` where `args` holds the validated input.",
+      "The body must `return` a string. Use `await import('node:fs/promises')` style imports inside the body.",
+      "Read secrets from process.env; never hard-code them. Requires user approval; the user sees the code first.",
+    ].join(" "),
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "Tool name (snake_case)" },
-        description: { type: "string", description: "What the tool does" },
+        name: { type: "string", description: "snake_case, 3–40 chars, e.g. count_lines" },
+        description: { type: "string", description: "What the tool does, written for the model" },
+        parameters: { type: "object", description: "JSON Schema (type: object) for the tool's arguments" },
+        code: { type: "string", description: "Function body for run(args)" },
       },
-      required: ["name", "description"],
+      required: ["name", "description", "parameters", "code"],
     },
-    execute: async (args) => {
-      const name = String(args.name);
-      const description = String(args.description);
-      const tool: ToolDefinition = {
-        name,
-        description,
-        parameters: {
-          type: "object",
-          properties: {
-            input: { type: "string", description: "Input for the tool" },
-          },
-          required: [],
-        },
-        execute: async (a) => {
-          return `Tool '${name}' received: ${JSON.stringify(a)}`;
-        },
-      };
-      try {
-        registerTool(tool);
-        return `Registered tool: ${name}`;
-      } catch (e) {
-        return String(e);
+    run: async (args, ctx) => {
+      const draft = validateToolDraft(args, (n) => ctx.registry.has(n));
+      const source = renderToolSource(draft);
+
+      if (!(await ctx.confirm(`Create tool "${draft.name}"?`, source))) {
+        return "User declined. The tool was not created.";
       }
+
+      await mkdir(ctx.toolsDir, { recursive: true });
+      const file = join(ctx.toolsDir, `${draft.name}.mjs`);
+      await writeFile(file, source, { encoding: "utf8", flag: "wx" });
+
+      try {
+        ctx.registry.register(await importToolModule(file));
+      } catch (e) {
+        await rm(file, { force: true });
+        return `Tool failed to load and was discarded: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      return `Created tool "${draft.name}". It is available now.`;
     },
-  });
-}
+  },
+];
