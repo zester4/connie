@@ -1,8 +1,8 @@
 # Connie
 
-Tool-calling terminal agent powered by OpenRouter. Extensible tools, clean REPL, and a simple architecture.
+Tool-calling terminal agent powered by OpenRouter. No SDK dependency — native `fetch`, a boxed banner, colored tool-call output, a spinner, and confirmation prompts for risky actions.
 
-## Structure
+## Project layout
 
 ```
 connie/
@@ -26,49 +26,64 @@ connie/
 
 ```bash
 npm install
-cp .env.example .env   # add your OPENROUTER_API_KEY
-npm run dev
+export OPENROUTER_API_KEY=sk-or-v1-...
+npm start                  # dev, runs via tsx
+# or
+npm run build && npm link  # installs the `connie` command globally
+connie
 ```
+
+Set `CONNIE_MODEL` to any model slug from [openrouter.ai/models](https://openrouter.ai/models) that supports tools. You can filter for them with `?supported_parameters=tools`. The default is `anthropic/claude-sonnet-4` — confirm that slug is still listed before relying on it.
 
 ## Environment
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENROUTER_API_KEY` | *required* | Your OpenRouter API key |
-| `OPENROUTER_MODEL` | `openai/gpt-4o-mini` | Model ID |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | API base |
-| `CONNIE_MAX_TOKENS` | `4096` | Max completion tokens |
-| `CONNIE_TEMPERATURE` | `0.7` | Sampling temperature |
-| `CONNIE_MAX_TOOL_ROUNDS` | `8` | Max tool-call loops per turn |
-| `CONNIE_SYSTEM_PROMPT` | (built-in) | Override system prompt |
+| `CONNIE_MODEL` | `anthropic/claude-sonnet-4` | Model slug |
+| `CONNIE_MAX_STEPS` | `15` | Max tool-call loops per turn |
+| `CONNIE_HOME` | `~/.connie` | Home directory for tools & future state |
 
 ## Builtin tools
 
-- `read_file` — read a file
-- `write_file` — write a file (creates dirs)
-- `list_dir` — list directory entries
-- `run_command` — run a shell command
-- `create_tool` — register a simple runtime tool
+| Tool | Description |
+|------|-------------|
+| `read_file` | Read a UTF-8 text file |
+| `write_file` | Create or overwrite a file (**requires approval**) |
+| `list_dir` | List directory entries (dirs end with `/`) |
+| `run_shell` | Run a shell command, 30s timeout (**requires approval**) |
+| `create_tool` | Create a persistent custom tool (**requires approval**) |
 
-## Custom tools
+## How self-made tools work
 
-Drop a `.js` / `.mjs` module in `~/.connie/tools/` that exports a tool object:
+When Connie decides it needs a capability it doesn't have, it calls `create_tool` with a name, description, JSON Schema, and function body. You see the full source and approve it with `y`. The file is written to `~/.connie/tools/<name>.mjs`, loaded immediately, and reloaded on every future start. If the module fails to load, it's deleted rather than left behind.
+
+Custom tools run with your full permissions, so review the code before approving. The confirmation step is the only safeguard — it is not a sandbox.
+
+### Custom tool format
 
 ```js
-export default {
-  name: "my_tool",
-  description: "Does something useful",
-  parameters: {
-    type: "object",
-    properties: {
-      input: { type: "string" },
-    },
-    required: ["input"],
+// ~/.connie/tools/my_tool.mjs
+export const description = "Does something useful";
+export const parameters = {
+  type: "object",
+  properties: {
+    input: { type: "string" },
   },
-  async execute({ input }) {
-    return `Got: ${input}`;
-  },
+  required: ["input"],
 };
+export default async function run(args) {
+  return `Got: ${args.input}`;
+}
+```
+
+## REPL commands
+
+```
+/help     show help
+/tools    list available tools
+/reset    clear the conversation
+/exit     quit
 ```
 
 ## License
