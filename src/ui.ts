@@ -1,58 +1,117 @@
 import chalk from "chalk";
+import { marked } from "marked";
+import { markedTerminal } from "marked-terminal";
 
-/** All terminal rendering lives here */
+// Configure marked once for terminal output
+marked.use(
+  markedTerminal({
+    reflowText: true,
+    tab: 2,
+  }) as never,
+);
 
-export function banner(): void {
-  console.log(
-    chalk.cyan.bold("\n  ✦ Connie") +
-      chalk.dim("  — tool-calling agent\n")
-  );
-}
+const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+const termWidth = () => Math.min(process.stdout.columns || 80, 100);
+const clip = (s: string, n: number) => (s.length > n ? s.slice(0, Math.max(0, n - 1)) + "…" : s);
+const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 
-export function info(msg: string): void {
-  console.log(chalk.blue("ℹ"), msg);
-}
+export const ui = {
+  banner(model: string, toolCount: number) {
+    const inner = termWidth() - 4;
+    const rows = [
+      chalk.bold.magenta("✦ Connie") + chalk.dim("  terminal agent"),
+      "",
+      chalk.dim("model  ") + chalk.cyan(model),
+      chalk.dim("tools  ") + `${toolCount} loaded`,
+      chalk.dim("help   ") + "/help for commands · Ctrl+C to quit",
+    ];
+    const top = chalk.magenta("╭" + "─".repeat(inner + 2) + "╮");
+    const bottom = chalk.magenta("╰" + "─".repeat(inner + 2) + "╯");
+    const body = rows.map((r) => {
+      const pad = Math.max(0, inner - strip(r).length);
+      return chalk.magenta("│") + " " + r + " ".repeat(pad) + " " + chalk.magenta("│");
+    });
+    console.log(["", top, ...body, bottom, ""].join("\n"));
+  },
 
-export function success(msg: string): void {
-  console.log(chalk.green("✓"), msg);
-}
+  prompt: () => chalk.cyan.bold("you ") + chalk.dim("› "),
 
-export function warn(msg: string): void {
-  console.log(chalk.yellow("⚠"), msg);
-}
+  /** Render final assistant reply with Markdown → terminal styles. */
+  assistant(text: string) {
+    console.log("\n" + chalk.magenta.bold("connie ") + chalk.dim("›"));
+    try {
+      const rendered = marked.parse(text.trim(), { async: false }) as string;
+      for (const line of rendered.trimEnd().split("\n")) {
+        console.log("  " + line);
+      }
+    } catch {
+      for (const line of text.trim().split("\n")) console.log("  " + line);
+    }
+    console.log();
+  },
 
-export function error(msg: string): void {
-  console.error(chalk.red("✗"), msg);
-}
+  /** Start streaming an assistant reply (call streamDelta / streamEnd). */
+  streamStart() {
+    process.stdout.write("\n" + chalk.magenta.bold("connie ") + chalk.dim("›\n  "));
+  },
 
-export function toolCall(name: string, args: string): void {
-  console.log(
-    chalk.magenta("→") +
-      " " +
-      chalk.magenta.bold(name) +
-      chalk.dim(`(${truncate(args, 80)})`)
-  );
-}
+  streamDelta(chunk: string) {
+    // Keep it simple: write raw text as it arrives (Markdown rendered at end)
+    process.stdout.write(chunk.replace(/\n/g, "\n  "));
+  },
 
-export function toolResult(name: string, result: string): void {
-  console.log(
-    chalk.green("←") +
-      " " +
-      chalk.dim(name) +
-      ": " +
-      chalk.white(truncate(result, 120))
-  );
-}
+  streamEnd(fullText: string) {
+    // Clear the streamed raw text and re-render with Markdown
+    // Move up and clear is fragile across terminals, so we just add a clean MD block
+    process.stdout.write("\n");
+    try {
+      const rendered = marked.parse(fullText.trim(), { async: false }) as string;
+      // Only re-print if Markdown actually changed the look
+      if (rendered.trim() !== fullText.trim()) {
+        console.log(chalk.dim("  ───"));
+        for (const line of rendered.trimEnd().split("\n")) {
+          console.log("  " + line);
+        }
+      }
+    } catch {
+      /* keep the streamed text */
+    }
+    console.log();
+  },
 
-export function assistant(content: string): void {
-  console.log("\n" + chalk.white(content) + "\n");
-}
+  toolCall(name: string, args: Record<string, unknown>) {
+    const argText = clip(oneLine(JSON.stringify(args)), 90);
+    console.log(chalk.yellow("  ⚙ ") + chalk.bold(name) + " " + chalk.dim(argText));
+  },
 
-export function dim(msg: string): void {
-  console.log(chalk.dim(msg));
-}
+  toolResult(ok: boolean, firstLine: string) {
+    const mark = ok ? chalk.green("  ✓ ") : chalk.red("  ✗ ");
+    console.log(mark + chalk.dim(clip(oneLine(firstLine), termWidth() - 6)));
+  },
 
-function truncate(s: string, max: number): string {
-  const oneLine = s.replace(/\s+/g, " ").trim();
-  return oneLine.length > max ? oneLine.slice(0, max - 1) + "…" : oneLine;
-}
+  detail(text: string, maxLines = 20) {
+    const lines = text.split("\n");
+    for (const l of lines.slice(0, maxLines)) console.log(chalk.dim("    │ ") + l);
+    if (lines.length > maxLines) console.log(chalk.dim(`    │ … ${lines.length - maxLines} more lines`));
+  },
+
+  info: (msg: string) => console.log(chalk.blue("  ℹ ") + msg),
+  success: (msg: string) => console.log(chalk.green("  ✔ ") + msg),
+  warn: (msg: string) => console.log(chalk.yellow("  ! ") + msg),
+  error: (msg: string) => console.error(chalk.red.bold("  ✖ ") + msg),
+
+  spinner(label: string) {
+    if (!process.stdout.isTTY) return { stop() {} };
+    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let i = 0;
+    const timer = setInterval(() => {
+      process.stdout.write(`\r${chalk.magenta(frames[i++ % frames.length])} ${chalk.dim(label)}…`);
+    }, 80);
+    return {
+      stop() {
+        clearInterval(timer);
+        process.stdout.write("\r\x1b[2K");
+      },
+    };
+  },
+};
