@@ -1,6 +1,14 @@
-/** Shared types for Connie agent */
+import type { ToolRegistry } from "./tools/registry.js";
 
-export interface Message {
+export type JSONSchema = Record<string, unknown>;
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string | null;
   tool_calls?: ToolCall[];
@@ -8,45 +16,28 @@ export interface Message {
   name?: string;
 }
 
-export interface ToolCall {
-  id: string;
-  type: "function";
-  function: {
-    name: string;
-    arguments: string;
-  };
-}
-
-export interface ToolDefinition {
+export interface ToolSpec {
   name: string;
   description: string;
-  parameters: Record<string, unknown>; // JSON Schema
-  execute: (args: Record<string, unknown>) => Promise<string> | string;
+  parameters: JSONSchema;
 }
 
-export interface AgentConfig {
-  model: string;
-  apiKey: string;
-  baseUrl: string;
-  maxTokens?: number;
-  temperature?: number;
-  systemPrompt?: string;
-  maxToolRounds?: number;
+export interface ToolContext {
+  registry: ToolRegistry;
+  toolsDir: string;
+  confirm(message: string, detail?: string): Promise<boolean>;
 }
 
-export interface OpenRouterResponse {
-  id: string;
-  choices: Array<{
-    message: {
-      role: string;
-      content: string | null;
-      tool_calls?: ToolCall[];
-    };
-    finish_reason: string;
-  }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
+export interface Tool extends ToolSpec {
+  run(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
+}
+
+/** One line in a session JSONL file */
+export interface SessionEvent {
+  ts: string;
+  role: "user" | "assistant" | "tool" | "system";
+  content?: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
 }
