@@ -36,7 +36,7 @@ export const ui = {
 
   prompt: () => chalk.cyan.bold("you ") + chalk.dim("› "),
 
-  /** Render final assistant reply with Markdown → terminal styles. */
+  /** Render final assistant reply with Markdown → terminal styles (non-stream path). */
   assistant(text: string) {
     console.log("\n" + chalk.magenta.bold("connie ") + chalk.dim("›"));
     try {
@@ -56,27 +56,12 @@ export const ui = {
   },
 
   streamDelta(chunk: string) {
-    // Keep it simple: write raw text as it arrives (Markdown rendered at end)
     process.stdout.write(chunk.replace(/\n/g, "\n  "));
   },
 
-  streamEnd(fullText: string) {
-    // Clear the streamed raw text and re-render with Markdown
-    // Move up and clear is fragile across terminals, so we just add a clean MD block
-    process.stdout.write("\n");
-    try {
-      const rendered = marked.parse(fullText.trim(), { async: false }) as string;
-      // Only re-print if Markdown actually changed the look
-      if (rendered.trim() !== fullText.trim()) {
-        console.log(chalk.dim("  ───"));
-        for (const line of rendered.trimEnd().split("\n")) {
-          console.log("  " + line);
-        }
-      }
-    } catch {
-      /* keep the streamed text */
-    }
-    console.log();
+  /** Finish a streamed reply — no second print (avoids double response). */
+  streamEnd(_fullText: string) {
+    process.stdout.write("\n\n");
   },
 
   toolCall(name: string, args: Record<string, unknown>) {
