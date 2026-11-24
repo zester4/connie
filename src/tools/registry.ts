@@ -1,27 +1,26 @@
-import type { ToolDefinition } from "../types.js";
+import type { Tool, ToolSpec } from "../types.js";
 
-/** Simple in-memory tool registry */
-const tools = new Map<string, ToolDefinition>();
+export class ToolRegistry {
+  private readonly tools = new Map<string, Tool>();
 
-export function registerTool(tool: ToolDefinition): void {
-  if (tools.has(tool.name)) {
-    throw new Error(`Tool already registered: ${tool.name}`);
+  register(tool: Tool): void {
+    if (this.tools.has(tool.name)) throw new Error(`Tool already registered: ${tool.name}`);
+    this.tools.set(tool.name, tool);
   }
-  tools.set(tool.name, tool);
-}
 
-export function getTool(name: string): ToolDefinition | undefined {
-  return tools.get(name);
-}
+  has(name: string): boolean {
+    return this.tools.has(name);
+  }
 
-export function listTools(): ToolDefinition[] {
-  return Array.from(tools.values());
-}
+  get(name: string): Tool | undefined {
+    return this.tools.get(name);
+  }
 
-export function getToolNames(): string[] {
-  return Array.from(tools.keys());
-}
+  list(): Tool[] {
+    return [...this.tools.values()];
+  }
 
-export function clearTools(): void {
-  tools.clear();
+  specs(): ToolSpec[] {
+    return this.list().map(({ name, description, parameters }) => ({ name, description, parameters }));
+  }
 }
