@@ -34,7 +34,7 @@ npm run build && npm link  # installs the `connie` command globally
 connie
 ```
 
-Set `CONNIE_MODEL` to any model slug from [openrouter.ai/models](https://openrouter.ai/models) that supports tools. Filter with `?supported_parameters=tools`. Default: `anthropic/claude-sonnet-4`.
+Set `CONNIE_MODEL` to any model slug from [openrouter.ai/models](https://openrouter.ai/models) that supports tools. Filter with `?supported_parameters=tools`. Default: `anthropic/claude-haiku-5.5`.
 
 ## What's new in v0.2
 
@@ -52,7 +52,7 @@ Ink was considered for a full TUI rewrite but skipped — the current chalk + sp
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENROUTER_API_KEY` | *required* | Your OpenRouter API key |
-| `CONNIE_MODEL` | `anthropic/claude-sonnet-4` | Model slug |
+| `CONNIE_MODEL` | `anthropic/claude-haiku-5.5` | Model slug |
 | `CONNIE_MAX_STEPS` | `15` | Max tool-call loops per turn |
 | `CONNIE_HOME` | `~/.connie` | Home for tools + sessions |
 
