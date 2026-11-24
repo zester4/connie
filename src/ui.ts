@@ -7,6 +7,7 @@ marked.use(
   markedTerminal({
     reflowText: true,
     tab: 2,
+    showSectionPrefix: false,
   }) as never,
 );
 
@@ -36,32 +37,23 @@ export const ui = {
 
   prompt: () => chalk.cyan.bold("you ") + chalk.dim("› "),
 
-  /** Render final assistant reply with Markdown → terminal styles (non-stream path). */
+  /** Render final assistant reply with Markdown → terminal styles. */
   assistant(text: string) {
     console.log("\n" + chalk.magenta.bold("connie ") + chalk.dim("›"));
+    const body = text.trim();
+    if (!body) {
+      console.log(chalk.dim("  (no response)\n"));
+      return;
+    }
     try {
-      const rendered = marked.parse(text.trim(), { async: false }) as string;
+      const rendered = marked.parse(body, { async: false }) as string;
       for (const line of rendered.trimEnd().split("\n")) {
         console.log("  " + line);
       }
     } catch {
-      for (const line of text.trim().split("\n")) console.log("  " + line);
+      for (const line of body.split("\n")) console.log("  " + line);
     }
     console.log();
-  },
-
-  /** Start streaming an assistant reply (call streamDelta / streamEnd). */
-  streamStart() {
-    process.stdout.write("\n" + chalk.magenta.bold("connie ") + chalk.dim("›\n  "));
-  },
-
-  streamDelta(chunk: string) {
-    process.stdout.write(chunk.replace(/\n/g, "\n  "));
-  },
-
-  /** Finish a streamed reply — no second print (avoids double response). */
-  streamEnd(_fullText: string) {
-    process.stdout.write("\n\n");
   },
 
   toolCall(name: string, args: Record<string, unknown>) {
